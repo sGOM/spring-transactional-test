@@ -26,7 +26,6 @@ repositories {
     mavenCentral()
 }
 
-val exposedVersion = "1.0.0-rc-4"
 val kotestVersion = "5.9.1"
 val kotestSpringExtensionVersion = "1.3.0"
 
