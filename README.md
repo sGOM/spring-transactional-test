@@ -26,7 +26,7 @@ Spring + JPA 의 트랜잭션 동작을 **실행 가능한 테스트로 증명**
 
 ## 테스트 목록
 
-총 **55개** 테스트, 10개 스펙.
+총 **64개** 테스트, 12개 스펙.
 
 ### 1. `propagation/RequiredPropagationTest` — 논리 트랜잭션 vs 물리 트랜잭션
 
@@ -68,7 +68,48 @@ REQUIRED 의 "참여"는 "중첩"이 아니다. 논리 트랜잭션은 2개여�
 
 > 실무 결론: JPA 를 쓰면서 부분 롤백이 필요하면 REQUIRES_NEW 로 간다.
 
-### 4. `propagation/OtherPropagationTest` — MANDATORY / NEVER / SUPPORTS / NOT_SUPPORTED
+### 4. `propagation/MixedPropagationChainTest` — 여러 트랜잭션이 복잡하게 섞인 경우
+
+3계층 이상으로 깊어지면 헷갈리는 지점은 하나다.
+
+> **전파 속성은 "누가 나를 불렀는가"가 아니라
+> "지금 스레드에 어떤 물리 트랜잭션이 바인딩돼 있는가"로 결정된다.**
+
+중간 계층이 REQUIRES_NEW 로 트랜잭션을 갈아끼우면, 그 아래 REQUIRED 자식은
+최초의 부모가 아니라 **중간 계층에 참여**한다. 여기서 나머지 결과가 모두 따라 나온다.
+
+| 시나리오 | 결과 | 설명 |
+|---------|------|------|
+| REQUIRED → REQUIRES_NEW → REQUIRED | 손자가 **중간**에 참여 | 물리 트랜잭션 2개(조부모 / 중간+손자), 논리 트랜잭션 3개 |
+| 위 체인에서 손자 실패 + **중간이 예외를 삼킴** | `UnexpectedRollbackException` 이 **중간에서** 발생, 조부모는 잡고 커밋 | **rollback-only 오염은 물리 트랜잭션 경계를 넘지 못한다** |
+| REQUIRED → NOT_SUPPORTED → REQUIRED | 손자가 조부모와 무관한 새 트랜잭션을 염 | 중간에서 부모가 중단되어 참여할 대상이 사라진다 |
+| REQUIRED → REQUIRES_NEW → REQUIRES_NEW | 물리 트랜잭션 3개 | EntityManager identity 3개가 모두 다름 |
+| REQUIRES_NEW 호출 전후의 부모 스냅샷 | 동일한 트랜잭션으로 복원 | suspend 는 ThreadLocal 리소스를 떼어 보관하고 resume 이 되돌려 놓는다 |
+| REQUIRES_NEW 여러 번 커밋 후 부모 실패 | **부분 커밋** | 원자성이 무너진다. 보상 트랜잭션을 직접 짜야 한다 |
+| 형제 호출: REQUIRES_NEW(성공) → REQUIRED(실패) | 앞은 살아남고 뒤는 부모까지 롤백 | 한 메서드 안에서 두 자식의 운명이 갈린다 |
+
+### 5. `propagation/RequiresNewSelfDeadlockTest` — REQUIRES_NEW 가 자기 자신과 교착
+
+```
+부모 트랜잭션(커넥션 A): 계좌 행 UPDATE -> 행 잠금 획득, 커밋 전
+  └─ 자식 REQUIRES_NEW(커넥션 B): 같은 행 UPDATE 시도
+         -> A 가 커밋할 때까지 대기
+         -> 그런데 A 는 B 가 끝나야 진행된다
+         -> 영원히 풀리지 않는다
+```
+
+**같은 스레드** 위에 있는데도 커넥션이 다르기 때문에, DB 입장에서는 남남인 두 세션이
+서로를 기다린다. 스레드가 하나뿐이라 어느 쪽도 양보할 수 없다.
+
+| 시나리오 | 결과 | 설명 |
+|---------|------|------|
+| 자식이 부모가 잠근 **같은 행**을 수정 | `LockTimeoutException`, 전체 롤백 | 운영에서 타임아웃이 길면 요청 스레드와 커넥션이 묶여 풀이 마르는 장애가 된다 |
+| 자식이 **다른 행**을 수정 | 둘 다 정상 커밋 | REQUIRES_NEW 자체가 문제가 아니라 "같은 자원을 두 트랜잭션이 잡는 것"이 문제다 |
+
+> 흔한 발생 경로: "감사 로그는 실패해도 남아야 하니까" REQUIRES_NEW 를 붙였는데
+> 그 로그 작업이 본 테이블을 함께 건드리는 경우.
+
+### 6. `propagation/OtherPropagationTest` — MANDATORY / NEVER / SUPPORTS / NOT_SUPPORTED
 
 | 전파 속성 | 부모 트랜잭션 있음 | 부모 트랜잭션 없음 |
 |----------|-----------------|------------------|
@@ -80,7 +121,7 @@ REQUIRED 의 "참여"는 "중첩"이 아니다. 논리 트랜잭션은 2개여�
 핵심 검증: NOT_SUPPORTED 안에서 저장한 데이터는 **부모가 롤백해도 살아남는다.**
 "트랜잭션 없이 실행"은 곧 자동 커밋이므로, 이 안에서의 쓰기는 되돌릴 방법이 없다.
 
-### 5. `rollback/RollbackPolicyTest` — 무엇이 롤백을 유발하는가
+### 7. `rollback/RollbackPolicyTest` — 무엇이 롤백을 유발하는가
 
 Spring 의 기본 규칙은 `RuntimeException` 과 `Error` 만 롤백한다.
 
@@ -93,7 +134,7 @@ Spring 의 기본 규칙은 `RuntimeException` 과 `Error` 만 롤백한다.
 | 언체크 예외 + `noRollbackFor` | 커밋 | 규칙 축소 ("재고 부족" 처럼 기록은 남겨야 하는 경우) |
 | 예외 없이 `setRollbackOnly()` | 커밋되지 않음 | 반환값으로 실패를 표현하는 API 용 |
 
-### 6. `proxy/SelfInvocationTest` — `@Transactional` 이 조용히 무시되는 경우
+### 8. `proxy/SelfInvocationTest` — `@Transactional` 이 조용히 무시되는 경우
 
 ```
 호출자 ──► [프록시: 트랜잭션 시작] ──► 원본 빈.method()
@@ -107,7 +148,7 @@ Spring 의 기본 규칙은 `RuntimeException` 과 `Error` 만 롤백한다.
 | 위 상태에서 저장 후 예외 | **롤백되지 않음** | 운영에서 데이터가 남는 형태로 드러난다 |
 | 자기 자신을 프록시로 주입해 호출 | 트랜잭션 정상 동작 | `ObjectProvider` 로 순환 참조 회피. 단, 서비스 분리가 우선 |
 
-### 7. `event/TransactionalEventTest` — 커밋된 뒤에만 부수효과 실행하기
+### 9. `event/TransactionalEventTest` — 커밋된 뒤에만 부수효과 실행하기
 
 | 리스너 | 실행 시점 |
 |-------|----------|
@@ -125,7 +166,7 @@ Spring 의 기본 규칙은 `RuntimeException` 과 `Error` 만 롤백한다.
 | **트랜잭션 없이 발행** | `fallbackExecution = true` 인 리스너만 실행 | "왜 리스너가 안 타지?"의 1순위 원인 |
 | `TransactionSynchronizationManager` 직접 등록 | beforeCommit → afterCommit → afterCompletion | `@TransactionalEventListener` 가 얹혀 있는 저수준 메커니즘 |
 
-### 8. `persistence/PersistenceContextAndReadOnlyTest` — 영속성 컨텍스트와 readOnly
+### 10. `persistence/PersistenceContextAndReadOnlyTest` — 영속성 컨텍스트와 readOnly
 
 | 시나리오 | 결과 | 설명 |
 |---------|------|------|
@@ -136,7 +177,7 @@ Spring 의 기본 규칙은 `RuntimeException` 과 `Error` 만 롤백한다.
 | `readOnly = true` 에서 엔티티 수정 | UPDATE 안 나감 | FlushMode 가 MANUAL 이라 변경 감지가 동작하지 않는다 |
 | `readOnly = true` 에서 `save()` | **커밋됨** | readOnly 는 쓰기 금지가 아니다. 안전장치로 믿으면 안 된다 |
 
-### 9. `isolation/IsolationLevelTest` — 격리 수준 (스레드 2개, H2 2.x 기준)
+### 11. `isolation/IsolationLevelTest` — 격리 수준 (스레드 2개, H2 2.x 기준)
 
 | 격리 수준 | Dirty Read | Non-Repeatable Read | Phantom Read |
 |----------|-----------|--------------------|--------------|
@@ -154,7 +195,7 @@ Spring 의 기본 규칙은 `RuntimeException` 과 `Error` 만 롤백한다.
 | REPEATABLE_READ, count 2회 | 건수 그대로 | 표준 SQL 은 팬텀을 허용하지만 H2(MVStore) 는 스냅샷 방식이라 함께 막힌다. **"격리 수준의 이름"이 아니라 "DB 의 실제 구현"을 확인해야 한다** |
 | READ_UNCOMMITTED | 미커밋 값이 읽힘 | 더티 리드 재현. 읽은 값은 곧 롤백되어 사라진다 |
 
-### 10. `lock/LostUpdateAndLockingTest` — 잃어버린 갱신과 두 가지 해법
+### 12. `lock/LostUpdateAndLockingTest` — 잃어버린 갱신과 두 가지 해법
 
 ```
 T1: 잔액 읽기 (1000)

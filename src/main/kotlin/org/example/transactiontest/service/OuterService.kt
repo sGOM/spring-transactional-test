@@ -10,6 +10,7 @@ import org.example.transactiontest.support.TxSnapshot
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.UnexpectedRollbackException
 import org.springframework.transaction.annotation.Transactional
 
 /** 바깥/안쪽 트랜잭션 스냅샷을 한 번에 돌려주기 위한 묶음 */
@@ -27,6 +28,7 @@ data class TxTrace(
 @Service
 class OuterService(
     private val innerService: InnerService,
+    private val middleService: MiddleService,
     private val logsRepository: LogsRepository,
     private val txProbe: TxProbe,
     private val entityManager: EntityManager,
@@ -234,8 +236,114 @@ class OuterService(
     @Transactional(propagation = Propagation.REQUIRED)
     fun snapshotOnly(): TxSnapshot = txProbe.snapshot("outer:REQUIRED")
 
+    // ==================================================================
+    // 3계층 이상으로 얽힌 체인
+    // ==================================================================
+
+    /**
+     * REQUIRED → REQUIRES_NEW → REQUIRED.
+     *
+     * 손자(REQUIRED)가 참여하는 대상은 **조부모가 아니라 중간**이다.
+     * 전파 속성은 "누가 나를 불렀는가"가 아니라
+     * "지금 스레드에 어떤 물리 트랜잭션이 바인딩돼 있는가"로 결정되기 때문이다.
+     */
+    @Transactional
+    fun requiredCallingRequiresNewCallingRequired(): List<TxSnapshot> {
+        logsRepository.save(Logs(OUTER_MESSAGE))
+        val downstream = middleService.requiresNewCallingRequired()
+        return listOf(txProbe.snapshot("outer:REQUIRED")) + downstream
+    }
+
+    /**
+     * REQUIRED → REQUIRES_NEW → REQUIRED(실패) 이고, **중간이 예외를 삼킨다.**
+     *
+     * 오염되는 것은 중간의 트랜잭션이므로 `UnexpectedRollbackException` 은
+     * 중간 메서드가 끝나는 시점에 터진다. 조부모는 그 예외를 잡고 살아남을 수 있다.
+     * = rollback-only 오염은 **물리 트랜잭션 경계를 넘지 못한다.**
+     *
+     * @return 조부모가 실제로 잡은 예외의 이름
+     */
+    @Transactional
+    fun requiredCallingMiddleThatSwallowsGrandChildFailure(): String {
+        logsRepository.save(Logs(OUTER_MESSAGE))
+        return try {
+            middleService.requiresNewCallingRequiredAndCatch()
+            "예외 없음"
+        } catch (e: UnexpectedRollbackException) {
+            log.info("Outer: 중간 트랜잭션이 rollback-only 로 롤백되었다. 나는 무사하다. {}", e.message)
+            e.javaClass.simpleName
+        }
+    }
+
+    /**
+     * REQUIRED → NOT_SUPPORTED → REQUIRED.
+     *
+     * 중간에서 부모가 중단되었으므로 손자는 참여할 트랜잭션이 없고,
+     * **조부모와 무관한 완전히 새로운 물리 트랜잭션**을 연다.
+     * 물리 트랜잭션 2개가 서로를 전혀 모르는 상태가 된다.
+     */
+    @Transactional
+    fun requiredCallingNotSupportedCallingRequired(): List<TxSnapshot> {
+        logsRepository.save(Logs(OUTER_MESSAGE))
+        val downstream = middleService.notSupportedCallingRequired()
+        return listOf(txProbe.snapshot("outer:REQUIRED")) + downstream
+    }
+
+    /** REQUIRED → REQUIRES_NEW → REQUIRES_NEW. 물리 트랜잭션이 3개가 된다. */
+    @Transactional
+    fun requiredCallingTwoNestedRequiresNew(): List<TxSnapshot> {
+        logsRepository.save(Logs(OUTER_MESSAGE))
+        val downstream = middleService.requiresNewCallingRequiresNew()
+        return listOf(txProbe.snapshot("outer:REQUIRED")) + downstream
+    }
+
+    /**
+     * 중단(suspend)되었던 부모 트랜잭션이 자식이 끝난 뒤 **원래대로 복원**되는지 확인한다.
+     *
+     * @return [자식 호출 전 부모, 자식, 자식 호출 후 부모] 순서의 스냅샷
+     */
+    @Transactional
+    fun snapshotsAroundSuspendAndResume(): List<TxSnapshot> {
+        val before = txProbe.snapshot("outer:before-suspend")
+        val inner = innerService.requiresNew()
+        val after = txProbe.snapshot("outer:after-resume")
+        return listOf(before, inner, after)
+    }
+
+    /**
+     * 독립 커밋되는 단위 작업을 여러 번 수행한 뒤 부모가 실패한다.
+     *
+     * 각 REQUIRES_NEW 는 이미 커밋되었으므로 되돌아가지 않는다.
+     * 결과는 "절반만 처리된" 상태 — REQUIRES_NEW 를 남용하면 원자성이 무너진다.
+     * 이런 구조에서는 보상 트랜잭션(compensating transaction)을 직접 짜야 한다.
+     */
+    @Transactional
+    fun requiredCallingSeveralRequiresNewThenFails() {
+        logsRepository.save(Logs(OUTER_MESSAGE))
+        middleService.requiresNewSaving(STEP1_MESSAGE)
+        middleService.requiresNewSaving(STEP2_MESSAGE)
+        throw OuterFailureException("독립 커밋된 단위 작업들 이후에 부모가 실패")
+    }
+
+    /**
+     * 형제 호출: 먼저 REQUIRES_NEW(성공), 그다음 REQUIRED(실패).
+     *
+     * 앞의 REQUIRES_NEW 는 이미 커밋되어 살아남고,
+     * 뒤의 REQUIRED 는 부모 트랜잭션을 오염시켜 부모 작업까지 전부 롤백시킨다.
+     * 한 메서드 안에서 두 결과가 동시에 나온다.
+     */
+    @Transactional
+    fun requiredCallingRequiresNewThenFailingRequired() {
+        logsRepository.save(Logs(OUTER_MESSAGE))
+        innerService.requiresNew(SIBLING_MESSAGE)
+        innerService.requiredAndFail()
+    }
+
     companion object {
         const val OUTER_MESSAGE = "OUTER"
         const val RECOVERY_MESSAGE = "OUTER_AFTER_CATCH"
+        const val STEP1_MESSAGE = "STEP-1"
+        const val STEP2_MESSAGE = "STEP-2"
+        const val SIBLING_MESSAGE = "SIBLING_REQUIRES_NEW"
     }
 }
