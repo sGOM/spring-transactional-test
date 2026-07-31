@@ -1,8 +1,31 @@
 spring:
   datasource:
-    # jdbc:h2:mem:testdb -> Creates an in-memory database named 'testdb'
-    # DB_CLOSE_DELAY=-1 -> Keeps the database open when the last connection closes (until VM exits)
-    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    # jdbc:h2:mem:testdb   -> 'testdb' 라는 이름의 인메모리 DB
+    # DB_CLOSE_DELAY=-1    -> 마지막 커넥션이 닫혀도 DB 를 유지 (JVM 종료 시까지)
+    # LOCK_TIMEOUT=10000   -> 비관적 락 테스트에서 대기 중인 스레드가 성급히 타임아웃되지 않도록 10초로 늘림
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;LOCK_TIMEOUT=10000
     driver-class-name: org.h2.Driver
     username: sa
     password:
+    hikari:
+      # 동시성 테스트에서는 스레드 두 개가 각자 커넥션을 잡은 채로 대기한다.
+      # 풀이 작으면 "락 대기"가 아니라 "커넥션 고갈"로 멈추므로 넉넉하게 잡는다.
+      maximum-pool-size: 10
+      connection-timeout: 20000
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    # OSIV 를 끄면 트랜잭션 경계 == 영속성 컨텍스트 경계가 되어 실험 결과가 명확해진다.
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    # 트랜잭션이 언제 열리고 / 참여하고 / 중단(suspend)되는지 직접 보고 싶다면 아래 주석을 해제한다.
+    # org.springframework.transaction.interceptor: TRACE
+    # org.springframework.orm.jpa.JpaTransactionManager: DEBUG
+    org.example.transactiontest: INFO
