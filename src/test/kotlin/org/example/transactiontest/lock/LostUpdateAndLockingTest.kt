@@ -1,6 +1,8 @@
 package org.example.transactiontest.lock
 
 import io.kotest.core.spec.style.BehaviorSpec
+import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldContainInOrder
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -148,8 +150,39 @@ class LostUpdateAndLockingTest(
                     // 두 입금이 모두 살아남았다 = 잃어버린 갱신이 발생하지 않았다.
                     accountService.findBalance(id) shouldBe 1_300
 
-                    // 두 번째는 첫 번째가 커밋을 끝낸 뒤에야 락을 얻었다 = 완전히 직렬화되었다.
-                    timeline shouldContainInOrder listOf(
+                    // ── 각 스레드 내부의 순서는 프로그램 순서라 항상 고정된다.
+                    timeline.filter { it.startsWith("first:") } shouldContainExactly listOf(
+                        "first:locked",
+                        "first:writing",
+                        "first:committed",
+                    )
+                    timeline.filter { it.startsWith("second:") } shouldContainExactly listOf(
+                        "second:locked",
+                        "second:committed",
+                    )
+
+                    // ── 두 스레드 **사이**에서 DB 가 보장해 주는 것은 이 한 가지뿐이다.
+                    // second 의 select ... for update 는 first 가 커밋할 때까지 풀리지 않는다.
+                    // first 는 임계 구역(= "first:writing" 까지)을 끝낸 뒤에야 커밋하므로,
+                    // "first:writing" 이 "second:locked" 보다 먼저인 것은 확정이다. = 직렬화의 증거.
+                    timeline shouldContainInOrder listOf("first:writing", "second:locked")
+
+                    // ── 여기서부터가 "정답이 여러 개"인 지점이다.
+                    //
+                    // "first:committed" 는 first 스레드가, "second:locked" 는 second 스레드가 찍는다.
+                    // 그런데 second 의 락 대기를 풀어 주는 사건이 바로 **first 의 커밋**이다.
+                    // 즉 커밋이 끝나는 순간 두 스레드가 동시에 깨어나 각자 리스트에 기록하며,
+                    // 그 둘 사이에는 어떤 happens-before 관계도 없다.
+                    //
+                    //   first : 프록시 복귀(EntityManager 정리 등) -> "first:committed"
+                    //   second: H2 가 대기 세션 깨움 -> 행 반환 -> 엔티티 로딩 -> "second:locked"
+                    //
+                    // 보통은 할 일이 적은 first 가 이기지만 그건 확률일 뿐 보장이 아니다.
+                    // 실제로 first 스레드에 50ms 지연만 넣어도 아래 순서가 관측된다.
+                    //   [first:locked, first:writing, second:locked, second:committed, first:committed]
+                    // 따라서 두 순서 모두 정답으로 인정한다. 원래 있던
+                    // `first:committed -> second:locked` 단언은 CI 부하/GC 로 깨지는 플래키 테스트였다.
+                    timeline shouldContainExactlyInAnyOrder listOf(
                         "first:locked",
                         "first:writing",
                         "first:committed",

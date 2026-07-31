@@ -6,6 +6,7 @@ import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainAll
 import io.kotest.matchers.collections.shouldContainInOrder
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.shouldBe
 import org.example.transactiontest.exception.OuterFailureException
@@ -58,6 +59,11 @@ class TransactionalEventTest(
                     orderService.placeOrder("A-1")
 
                     // @EventListener 는 publishEvent 시점에 곧바로, 즉 커밋되기 한참 전에 실행된다.
+                    // 여기서 first() 로 단정해도 안전한 이유: 나머지 리스너는 전부
+                    // @TransactionalEventListener 라서 커밋 시점으로 미뤄진다.
+                    // 즉 publishEvent 안에서 실행될 수 있는 리스너가 이것 하나뿐이라,
+                    // 리스너 목록의 순서와 무관하게 항상 첫 번째가 된다.
+                    // (트랜잭션이 없으면 이 전제가 깨진다 — 아래 "트랜잭션 없이" 시나리오 참고)
                     orderEventRecorder.phases.first() shouldBe "IMMEDIATE"
 
                     orderEventRecorder.phases shouldContainAll listOf(
@@ -114,7 +120,32 @@ class TransactionalEventTest(
                     // 발행하는 메서드에 @Transactional 이 빠져 있으면 아무 일도 일어나지 않는다.
                     orderService.placeOrderWithoutTransaction("C-1")
 
-                    orderEventRecorder.phases shouldContainExactly listOf(
+                    // 이 시나리오의 핵심은 "어떤 리스너가 실행됐는가"이지 "어떤 순서로"가 아니다.
+                    // 실행된 집합만 검증하고 순서는 정답을 하나로 못 박지 않는다. 이유는 아래.
+                    //
+                    // 트랜잭션이 없으므로 두 리스너가 **같은 publishEvent 안에서 동기 실행**된다.
+                    //   - onImmediate              : @EventListener
+                    //   - onAfterCommitWithFallback: @TransactionalEventListener(fallbackExecution = true)
+                    //     -> 커밋을 기다릴 트랜잭션이 없으니 미루지 않고 그 자리에서 실행된다
+                    //
+                    // 둘 사이의 순서는 멀티캐스터가 들고 있는 리스너 목록의 순서로 정해지는데,
+                    //   AnnotationAwareOrderComparator 정렬 (둘 다 @Order 없음 = LOWEST_PRECEDENCE 동률)
+                    //     -> 안정 정렬이라 등록 순서가 그대로 유지됨
+                    //     -> EventListenerMethodProcessor -> MethodIntrospector.selectMethods
+                    //     -> Class.getDeclaredMethods()
+                    // 이고, getDeclaredMethods() 의 반환 순서는 **JVM 명세가 보장하지 않는다.**
+                    //
+                    // 실제로 같은 JVM 실행 안에서도 두 순서가 모두 관측되었다.
+                    //   A-1/A-2/B-1 (트랜잭션 있음): IMMEDIATE -> AFTER_COMMIT_FALLBACK
+                    //     (fallback 이 커밋 시점으로 미뤄져서 리스너 순서가 드러나지 않았을 뿐)
+                    //   C-1        (트랜잭션 없음): AFTER_COMMIT_FALLBACK -> IMMEDIATE
+                    //     (미뤄지지 않으니 날것의 리스너 순서가 그대로 드러남)
+                    //
+                    // 즉 두 순서 모두 정답이다. 순서를 고정하고 싶다면 테스트가 아니라
+                    // 리스너 쪽에 @Order 를 명시해야 한다. 위 "커밋되면" 시나리오의
+                    // `phases.first() shouldBe "IMMEDIATE"` 는 이 문제에서 자유로운데,
+                    // 거기서는 나머지 리스너가 전부 커밋 시점으로 미뤄지기 때문이다.
+                    orderEventRecorder.phases shouldContainExactlyInAnyOrder listOf(
                         "IMMEDIATE",
                         "AFTER_COMMIT_FALLBACK",
                     )
