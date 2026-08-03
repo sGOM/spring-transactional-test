@@ -34,14 +34,19 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 
-    // 2. Database
+    // 2. Kotlin
+    // Spring Data 가 Kotlin 클래스의 주 생성자를 찾을 때 kotlin-reflect 를 사용한다.
+    // 없으면 리포지토리 초기화 시점에 ClassNotFoundException: kotlin.reflect.full.KClasses 로 기동이 실패한다.
+    implementation("org.jetbrains.kotlin:kotlin-reflect")
+
+    // 3. Database
     runtimeOnly("com.h2database:h2")
 
-    // 3. Test
+    // 4. Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 
-    // 4. Kotest
+    // 5. Kotest
     testImplementation("io.kotest:kotest-runner-junit5:$kotestVersion")
     testImplementation("io.kotest:kotest-assertions-core:$kotestVersion")
     testImplementation("io.kotest.extensions:kotest-extensions-spring:$kotestSpringExtensionVersion")
