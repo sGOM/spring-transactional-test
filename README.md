@@ -11,6 +11,17 @@ Spring + JPA 의 트랜잭션 동작을 **실행 가능한 테스트로 증명**
 ./gradlew test
 ```
 
+## 함께 보는 문서
+
+| 문서 | 내용 | 이럴 때 본다 |
+|------|------|------------|
+| **[STUDY.md](STUDY.md)** | 본문 코드 구조 + 12개 스펙 64개 테스트 전부의 상세 해설 | 특정 테스트가 **왜 그런 결과**가 나오는지 알고 싶을 때 |
+| **[CONCEPTS.md](CONCEPTS.md)** | 실제 구현체(H2 / Hikari / Hibernate / `JpaTransactionManager`)와 트랜잭션 개념 정리 | 개념부터 잡고 싶거나, **공식 문서 원문**을 찾을 때 |
+| [CLAUDE.md](CLAUDE.md) | 이 저장소에서 코드를 수정할 때 지켜야 할 설계 결정 | 테스트를 추가·변경할 때 |
+
+아래 표는 **결과 요약**이다. 실행 흐름과 근거 코드(`파일:줄번호`)까지 따라가려면
+[STUDY.md](STUDY.md) 의 해당 스펙 절을 본다.
+
 ## 기술 스택
 
 | 항목 | 버전 |
@@ -22,11 +33,17 @@ Spring + JPA 의 트랜잭션 동작을 **실행 가능한 테스트로 증명**
 | Kotest Spring Extension | 1.3.0 |
 | H2 | Spring Boot 관리 버전 (2.x, MVStore) |
 
+> 런타임에 실제로 로딩되는 구현체와 버전(H2 2.4.240, Hibernate 7.2.0.Final, Spring 7.0.2,
+> `SessionImpl`, `HikariDataSource` 등)은 [CONCEPTS.md 1부](CONCEPTS.md#1부-이-프로젝트가-실제로-쓰는-구현체) 에
+> 확인값으로 정리해 두었다.
+
 ---
 
 ## 테스트 목록
 
 총 **64개** 테스트, 12개 스펙.
+각 스펙의 상세 해설은 [STUDY.md](STUDY.md) 의 **같은 번호 절**에 있다
+(예: 아래 3번 → `STUDY.md` 의 "3. NestedPropagationTest").
 
 ### 1. `propagation/RequiredPropagationTest` — 논리 트랜잭션 vs 물리 트랜잭션
 
@@ -248,6 +265,9 @@ src/test/kotlin/org/example/transactiontest/
 ├── propagation/  rollback/  proxy/  event/  persistence/  isolation/  lock/
 ```
 
+각 파일이 어떤 역할을 맡고 그것이 테스트 결과를 어떻게 좌우하는지는
+[STUDY.md 1부](STUDY.md) 에서 다룬다.
+
 ## 테스트를 읽기 전에 알아야 할 설계 결정
 
 **1. 테스트 메서드에 `@Transactional` 을 붙이지 않는다.**
@@ -278,3 +298,18 @@ logging:
     org.springframework.transaction.interceptor: TRACE
     org.springframework.orm.jpa.JpaTransactionManager: DEBUG
 ```
+
+로그에서 찾아야 할 문구(`Participating in existing transaction`,
+`Suspending current transaction` 등)는 [STUDY.md 부록](STUDY.md) 에 정리되어 있다.
+
+---
+
+## 더 읽기
+
+- **[STUDY.md](STUDY.md)** — 테스트 64개의 실행 흐름 해설. 스펙마다 "한눈에 → 자세히" 2단 구성이며,
+  마지막에 `UnexpectedRollbackException` 발생 조건, "데이터가 롤백되지 않았다"의 원인 후보 등
+  증상 → 원인 역인덱스가 붙어 있다.
+- **[CONCEPTS.md](CONCEPTS.md)** — `@Transactional` 한 줄이 지나가는 7단계 계층(프록시 → 트랜잭션 매니저 →
+  ThreadLocal → Hibernate 세션 → 커넥션 풀 → H2), 각 층의 실제 구현체, 그리고 전파·격리·락·이벤트
+  개념 정리. Spring / Hibernate / H2 **공식 문서 링크와 원문 인용** 포함.
+- [CLAUDE.md](CLAUDE.md) — 코드를 수정할 때 지켜야 할 설계 결정과 응답 규칙.
