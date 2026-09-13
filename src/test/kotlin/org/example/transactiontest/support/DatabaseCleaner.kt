@@ -23,6 +23,6 @@ class DatabaseCleaner(
     }
 
     private companion object {
-        val TABLES = listOf("logs", "account", "counter")
+        val TABLES = listOf("logs", "account", "counter", "member", "team")
     }
 }

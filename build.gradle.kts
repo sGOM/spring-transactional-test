@@ -53,6 +53,15 @@ dependencies {
 
 }
 
+// Hibernate 는 지연 로딩 프록시를 만들 때 엔티티 클래스를 상속한다.
+// Kotlin 클래스는 기본이 final 이라 프록시를 만들 수 없고, 그러면 @ManyToOne(fetch = LAZY) 가
+// 조용히 즉시 로딩으로 동작한다. allopen 으로 @Entity 클래스를 열어 둬야 LAZY 가 실제로 걸린다.
+allOpen {
+    annotation("jakarta.persistence.Entity")
+    annotation("jakarta.persistence.MappedSuperclass")
+    annotation("jakarta.persistence.Embeddable")
+}
+
 kotlin {
     compilerOptions {
         freeCompilerArgs.addAll("-Xjsr305=strict", "-Xannotation-default-target=param-property")
