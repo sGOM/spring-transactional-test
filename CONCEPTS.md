@@ -14,7 +14,10 @@
 `@SpringBootTest` 로 한 번 돌린 뒤 삭제했다. 이 문서의 클래스 이름과 버전은 그 출력값이다.
 
 개념 설명에는 **공식 문서 링크**를 붙이고, 이해에 도움이 되는 대목은 원문을 인용문으로 옮겼다.
-인용은 모두 영어 원문 그대로이며, 아래에 한국어 요약을 덧붙였다.
+인용은 모두 영어 원문 그대로 두고, 바로 아래에 두 줄을 덧붙였다.
+
+- **번역** — 인용문의 한국어 번역
+- **풀이** — 그 문장이 이 프로젝트의 테스트에서 어떤 의미인지 한두 줄 설명
 
 ---
 
@@ -130,6 +133,12 @@ hikari:
 > "If a connection cannot get a lock on an object, the connection waits for some amount of time (the lock timeout)."
 > — H2 Advanced
 
+**번역** — "어떤 객체에 대한 락을 얻지 못한 커넥션은 일정 시간(락 타임아웃) 동안 대기한다."
+
+**풀이** — 기다리는 주체가 **락을 요청한 쪽 커넥션**이라는 점이 핵심이다.
+따라서 적용되는 타임아웃 값도 그 커넥션(H2 세션)에 설정된 값이며, 다른 커넥션에
+`SET LOCK_TIMEOUT` 을 걸어 봐야 대기 중인 세션에는 아무 영향이 없다.
+
 이 성질 때문에 `SelfDeadlockService.kt:75` 는 `JdbcTemplate` 을 쓰지 못한다.
 `JpaTransactionManager` 는 DataSource 를 직접 쓰지 않으므로 `JdbcTemplate` 은 풀에서
 **다른 커넥션**을 꺼내오고, 거기에 `SET LOCK_TIMEOUT` 을 걸어봐야 정작 락을 기다리는
@@ -226,8 +235,21 @@ Hibernate 문서는 영속성 컨텍스트를 이렇게 설명한다.
 > Thus, in the architecture of Hibernate, it's sometimes called the *first-level cache*"
 > — [Hibernate 7 Introduction](https://docs.hibernate.org/orm/7.0/introduction/html_single/Hibernate_Introduction.html)
 
+**번역** — "영속성 컨텍스트는 현재 트랜잭션에서 읽어 온 데이터의 캐시라고 생각하면 된다.
+그래서 Hibernate 의 구조에서는 이것을 *1차 캐시*라고 부르기도 한다."
+
+**풀이** — "영속성 컨텍스트"와 "1차 캐시"는 서로 다른 두 장치가 아니라 **같은 것의 다른 이름**이다.
+그리고 그 유효 범위가 "current transaction", 즉 트랜잭션 하나라는 점을 명시하고 있다.
+
 > the Session "maintains a generally 'repeatable read' persistence context (first level cache)"
 > — [Hibernate 7 User Guide](https://docs.hibernate.org/orm/7.0/userguide/html_single/Hibernate_User_Guide.html)
+
+**번역** — Session 은 "대체로 '반복 가능한 읽기(repeatable read)'를 보장하는 영속성 컨텍스트(1차 캐시)를 유지한다."
+
+**풀이** — DB 의 격리 수준이 무엇이든, 같은 Session 안에서 같은 엔티티를 다시 읽으면
+캐시가 같은 값을 돌려주므로 **애플리케이션 입장에서는 REPEATABLE READ 처럼 보인다**는 뜻이다.
+"generally(대체로)"라는 단서가 붙은 이유는 이것이 DB 가 보장하는 격리가 아니라
+캐시가 만들어 낸 착시이기 때문이다.
 
 두 번째 인용의 **"generally repeatable read"** 가 `IsolationLevelTest` 첫 시나리오의 정체다.
 DB 격리 수준이 무엇이든, 같은 세션에서 같은 PK 를 다시 읽으면 1차 캐시가 같은 값을 돌려준다.
@@ -245,6 +267,14 @@ DB 격리 수준이 무엇이든, 같은 세션에서 같은 PK 를 다시 읽�
 > is set to `true`. All others are configured with a plain `@Transactional` so that default
 > transaction configuration applies."
 > — Spring Data JPA Reference
+
+**번역** — "기본적으로 `CrudRepository` 에서 상속받은 메서드들은 `SimpleJpaRepository` 의
+트랜잭션 설정을 그대로 물려받는다. 읽기 작업에는 트랜잭션 설정의 `readOnly` 플래그가 `true` 로
+지정되고, 나머지는 모두 기본 트랜잭션 설정이 적용되도록 평범한 `@Transactional` 이 붙어 있다."
+
+**풀이** — `save()`, `findById()` 같은 메서드에는 **이미 `@Transactional` 이 붙어 있다**는 뜻이다.
+즉 내 서비스 코드에 `@Transactional` 을 안 붙였다고 해서 트랜잭션이 없는 게 아니라,
+리포지토리 호출 하나가 곧 트랜잭션 하나(열고 → 바로 커밋)가 된다.
 
 **이 사실을 모르면 `RequiredPropagationTest` 의 비교군 결과를 설명할 수 없다.**
 서비스에 `@Transactional` 이 하나도 없어도 트랜잭션이 0개인 게 아니라,
@@ -284,6 +314,16 @@ DB 격리 수준이 무엇이든, 같은 세션에서 같은 PK 를 다시 읽�
 > the inner transaction scope. In the case of standard `PROPAGATION_REQUIRED` behavior,
 > **all these scopes are mapped to the same physical transaction**."
 > — Spring Framework Reference
+
+**번역** — "전파 설정이 `PROPAGATION_REQUIRED` 일 때는, 그 설정이 적용된 메서드마다
+**논리 트랜잭션 범위**가 하나씩 만들어진다. 이 논리 트랜잭션 범위들은 각각 독립적으로
+rollback-only 상태를 정할 수 있으며, 바깥 범위는 안쪽 범위와 논리적으로 별개다.
+다만 표준적인 `PROPAGATION_REQUIRED` 동작에서는 **이 모든 범위가 하나의 물리 트랜잭션에 매핑된다**."
+
+**풀이** — 이 한 문단이 이 문서 전체에서 가장 중요하다.
+`@Transactional` 을 다섯 개 거쳐도 논리 트랜잭션은 5개지만 물리 트랜잭션은 1개다.
+"각자 rollback-only 를 정할 수 있다"와 "전부 같은 물리 트랜잭션이다"가 **동시에 참**이라는
+어긋남에서 `UnexpectedRollbackException`(2-6)이 나온다.
 
 정리하면 이렇다.
 
@@ -343,6 +383,14 @@ REQUIRES_NEW 는 기존 `EntityManagerHolder` 를 떼어내 보관하고 새 것
 > it can be easily mocked or stubbed as necessary."
 > — Spring Framework Reference
 
+**번역** — "이것은 애플리케이션 코드에서 직접 프로그래밍 방식으로 쓸 수도 있지만
+기본적으로는 서비스 제공자 인터페이스(SPI)다. `PlatformTransactionManager` 는 인터페이스이므로
+필요하면 손쉽게 mock 이나 stub 으로 대체할 수 있다."
+
+**풀이** — SPI(Service Provider Interface)란 "쓰는 쪽"이 아니라 "구현해서 끼워 넣는 쪽"을 위한
+인터페이스라는 뜻이다. 그래서 JPA·JDBC·JTA 마다 구현체만 갈아끼우면 되고,
+`@Transactional` 을 쓰는 코드는 어떤 구현체가 들어와도 그대로다.
+
 `TransactionDefinition` 이 정의하는 네 가지 축:
 
 > "**Propagation**: Typically, all code within a transaction scope runs in that transaction.
@@ -358,6 +406,21 @@ REQUIRES_NEW 는 기존 `EntityManagerHolder` 를 떼어내 보관하고 새 것
 > "**Read-only status**: You can use a read-only transaction when your code reads but does not
 > modify data."
 > — Spring Framework Reference
+
+**번역**
+
+- **Propagation(전파)** — "보통 트랜잭션 범위 안의 모든 코드는 그 트랜잭션 안에서 실행된다.
+  다만 트랜잭션 컨텍스트가 이미 존재하는 상태에서 트랜잭션 메서드가 실행될 때의 동작은 따로 지정할 수 있다."
+- **Isolation(격리)** — "이 트랜잭션이 다른 트랜잭션의 작업으로부터 얼마나 격리되는가.
+  예를 들어, 이 트랜잭션이 다른 트랜잭션의 커밋되지 않은 쓰기를 볼 수 있는가?"
+- **Timeout(타임아웃)** — "이 트랜잭션이 타임아웃되어 하부 트랜잭션 인프라에 의해 자동으로
+  롤백되기까지 얼마나 오래 실행될 수 있는가."
+- **Read-only status(읽기 전용 여부)** — "코드가 데이터를 읽기만 하고 수정하지 않는다면
+  읽기 전용 트랜잭션을 쓸 수 있다."
+
+**풀이** — 네 축 모두 `@Transactional(propagation = ..., isolation = ..., timeout = ..., readOnly = ...)`
+속성으로 그대로 대응된다. 특히 Propagation 의 설명이 "**이미 트랜잭션이 있을 때**의 동작"이라고
+못 박은 점을 눈여겨볼 것 — 부모가 없으면 7가지 전파 속성 중 상당수가 사실상 같게 동작한다.
 
 이 저장소는 이 네 축 중 **Propagation, Isolation, Read-only** 세 개를 테스트로 고정했다
 (Timeout 은 다루지 않는다. 확인값으로 `defaultTimeout = -1` = 무제한).
@@ -392,6 +455,16 @@ REQUIRES_NEW 는 기존 `EntityManagerHolder` 를 떼어내 보관하고 새 것
 > transaction's **locks released immediately after its completion**."
 > — Spring Framework Reference
 
+**번역** — "`PROPAGATION_REQUIRES_NEW` 는 `PROPAGATION_REQUIRED` 와 달리, 해당 트랜잭션 범위마다
+항상 **독립적인 물리 트랜잭션**을 사용하며 바깥 범위의 기존 트랜잭션에 절대 참여하지 않는다.
+이런 구성에서는 하부 자원 트랜잭션이 서로 다르므로 각자 독립적으로 커밋하거나 롤백할 수 있다.
+바깥 트랜잭션은 안쪽 트랜잭션의 롤백 상태에 영향을 받지 않고, 안쪽 트랜잭션의 **락은
+그 트랜잭션이 끝나는 즉시 해제된다**."
+
+**풀이** — 커넥션(EntityManager)이 아예 하나 더 열린다는 뜻이다.
+"바깥이 안쪽 롤백에 영향받지 않는다"가 REQUIRES_NEW 를 쓰는 이유(로그·이력은 남겨야 할 때)이자,
+동시에 원자성이 깨지는 원인(`STUDY.md` 4-6의 부분 커밋)이기도 하다.
+
 마지막 구절("자식의 락은 자식이 끝나는 즉시 풀린다")의 뒷면이 스펙 5의 교착이다.
 자식은 락을 즉시 풀지만, **부모의 락은 부모가 커밋해야 풀린다.**
 그래서 자식이 부모가 잡은 행을 원하면 영원히 기다린다.
@@ -401,6 +474,14 @@ REQUIRES_NEW 는 기존 `EntityManagerHolder` 를 떼어내 보관하고 새 것
 > for its scope, with the outer transaction being able to continue the physical transaction
 > despite some operations having been rolled back."
 > — Spring Framework Reference
+
+**번역** — "`PROPAGATION_NESTED` 는 되돌아갈 수 있는 **세이브포인트 여러 개를 가진 하나의
+물리 트랜잭션**을 사용한다. 이런 부분 롤백 덕분에 안쪽 트랜잭션 범위는 자기 범위만 롤백시킬 수 있고,
+바깥 트랜잭션은 일부 작업이 롤백되었더라도 물리 트랜잭션을 계속 이어갈 수 있다."
+
+**풀이** — REQUIRES_NEW 처럼 "따로 롤백"이 되면서도 커넥션은 하나만 쓰는, 이론상 가장 좋은 선택지다.
+다만 **JPA + Hibernate 조합에서는 쓸 수 없다**(1-5 참고). 세이브포인트를 만들려면
+`JpaDialect` 가 `SavepointManager` 를 제공해야 하는데 `HibernateJpaDialect` 는 제공하지 않는다.
 
 ### 전파 속성을 결정하는 기준
 
@@ -419,6 +500,12 @@ REQUIRES_NEW 는 기존 `EntityManagerHolder` 를 떼어내 보관하고 새 것
 
 > "Any `RuntimeException` or `Error` triggers rollback, and any checked `Exception` does not."
 > — Spring Framework Reference
+
+**번역** — "모든 `RuntimeException` 과 `Error` 는 롤백을 유발하고, 체크 예외(checked `Exception`)는
+롤백을 유발하지 않는다."
+
+**풀이** — 판단 기준이 "예외가 터졌는가"가 아니라 **"어떤 타입의 예외인가"** 라는 점이 함정이다.
+예외가 프록시 밖으로 나가더라도 체크 예외라면 Spring 은 정상 종료로 보고 **커밋**한다.
 
 구현은 `DefaultTransactionAttribute.rollbackOn` 이며, EJB 시절 관례를 이어받은 것이다
 ("체크 예외 = 호출자가 복구할 수 있는 비즈니스 상황이므로 작업을 확정한다").
@@ -442,6 +529,15 @@ Spring 6.2+ 에서는 전역 설정도 가능하다 — `@EnableTransactionManag
 > This is expected behavior so that **the caller of a transaction can never be misled to assume
 > that a commit was performed when it really was not.**"
 > — Spring Framework Reference
+
+**번역** — "그러나 안쪽 트랜잭션 범위가 rollback-only 표시를 남긴 경우, 바깥 트랜잭션은 스스로
+롤백을 결정한 적이 없으므로 (안쪽 범위가 조용히 유발한) 그 롤백은 **예상 밖의 일**이 된다.
+그래서 그 시점에 `UnexpectedRollbackException` 이 던져진다. 이것은 의도된 동작이며,
+**트랜잭션 호출자가 실제로는 커밋되지 않았는데 커밋되었다고 오해하는 일을 결코 없게 하기 위한 것**이다."
+
+**풀이** — 이름 그대로 "예상하지 못한(unexpected) 롤백"이다.
+바깥은 커밋할 생각이었는데, 안쪽이 이미 "이 트랜잭션은 롤백해야 함" 도장을 찍어 둔 상태라
+커밋 시도가 롤백으로 바뀐다. 그 사실을 조용히 넘기지 않고 예외로 알려 주는 것이다.
 
 이 인용이 이 예외를 이해하는 열쇠다. `UnexpectedRollbackException` 은 버그가 아니라
 **"커밋됐다고 착각하지 못하게 막는 안전장치"** 다.
@@ -472,6 +568,14 @@ Spring 6.2+ 에서는 전역 설정도 가능하다 — `@EnableTransactionManag
 > even if the invoked method is marked with `@Transactional`."
 > — Spring Framework Reference
 
+**번역** — "(기본값인) 프록시 모드에서는 **프록시를 거쳐 들어오는 외부 메서드 호출만 가로채진다**.
+즉 자기 호출(self-invocation, 대상 객체 안의 메서드가 같은 객체의 다른 메서드를 부르는 것)은
+그 메서드에 `@Transactional` 이 붙어 있더라도 런타임에 실제 트랜잭션으로 이어지지 않는다."
+
+**풀이** — `this.otherMethod()` 는 프록시를 거치지 않고 원본 객체 내부에서 바로 점프하므로
+`TransactionInterceptor` 가 끼어들 틈이 없다. **애노테이션이 조용히 무시된다** —
+예외도 경고도 없어서 알아채기 어렵다.
+
 이 프로젝트에서 확인된 사실:
 `LogsRepository` 는 **JDK 동적 프록시**(인터페이스 기반),
 `@Service` 클래스들은 **CGLIB 프록시**(클래스 기반)다(`SelfInvocationTest.kt:57`).
@@ -483,6 +587,15 @@ Spring 6.2+ 에서는 전역 설정도 가능하다 — `@EnableTransactionManag
 > class-based proxies by default.** Note that transactional methods in interface-based proxies
 > must always be `public` and defined in the proxied interface."
 > — Spring Framework Reference
+
+**번역** — "`@Transactional` 애노테이션은 보통 `public` 가시성을 가진 메서드에 사용한다.
+**6.0 부터는 클래스 기반 프록시에 한해 `protected` 나 패키지 전용 메서드도 기본적으로
+트랜잭션 대상이 될 수 있다.** 다만 인터페이스 기반 프록시에서는 트랜잭션 메서드가 항상
+`public` 이어야 하고 프록시 대상 인터페이스에 선언되어 있어야 한다."
+
+**풀이** — "클래스 기반 프록시" = CGLIB(이 프로젝트의 `@Service` 들),
+"인터페이스 기반 프록시" = JDK 동적 프록시(`LogsRepository`).
+어떤 프록시가 쓰이느냐에 따라 가시성 규칙이 달라진다는 뜻이다.
 
 즉 "public 이 아니면 무조건 안 된다"는 흔한 설명은 6.0 기준으로는 부정확하다.
 `protected` / package-private 는 CGLIB 프록시에서 동작한다.
@@ -500,6 +613,13 @@ Kotlin 은 클래스와 메서드가 **기본 final** 이다. CGLIB 는 final �
 > "Also, the proxy must be fully initialized to provide the expected behavior, so you should not
 > rely on this feature in your initialization code — for example, in a `@PostConstruct` method."
 > — Spring Framework Reference
+
+**번역** — "또한 기대한 동작을 얻으려면 프록시가 완전히 초기화되어 있어야 하므로,
+초기화 코드(예: `@PostConstruct` 메서드)에서는 이 기능에 의존해서는 안 된다."
+
+**풀이** — `@PostConstruct` 는 프록시가 씌워지기 **전**의 원본 빈에서 실행된다.
+그래서 그 안에서 `@Transactional` 메서드를 불러도 트랜잭션이 열리지 않는다.
+자기 호출과 원인은 다르지만 증상(애노테이션 무시)은 똑같다.
 
 ### 해결책 (우선순위 순)
 
@@ -527,15 +647,33 @@ Kotlin 은 클래스와 메서드가 **기본 final** 이다. CGLIB 는 final �
 > same condition and gets the new row."
 > — H2 Advanced
 
+**번역**
+
+- **Dirty Read(더티 리드)** — "어떤 커넥션이 다른 커넥션이 만든 **커밋되지 않은** 변경을 읽을 수 있다."
+- **Non-Repeatable Read(반복 불가능한 읽기)** — "어떤 커넥션이 한 행을 읽고, 다른 커넥션이
+  그 행을 변경한 뒤 커밋하고, 첫 번째 커넥션이 **같은 행을 다시 읽자 새 값**이 나온다."
+- **Phantom Read(팬텀 리드)** — "어떤 커넥션이 조건으로 여러 행을 읽고, 다른 커넥션이 그 조건에
+  해당하는 행을 삽입한 뒤 커밋하고, 첫 번째 커넥션이 **같은 조건으로 다시 읽자 새 행**이 나온다."
+
+**풀이** — 셋의 차이는 "무엇이 달라졌는가"에 있다.
+더티 리드는 **아직 커밋도 안 된 값**을 본 것이고,
+반복 불가능한 읽기는 **이미 있던 행의 값**이 바뀐 것이고,
+팬텀 리드는 **행의 개수 자체**가 늘어난 것이다.
+격리 수준을 올리면 이 순서대로 하나씩 막힌다.
+
 ### H2 가 공식적으로 밝힌 각 수준의 동작
 
-| 격리 수준 | H2 공식 문서의 서술 |
-|---|---|
-| READ UNCOMMITTED | "Dirty reads, non-repeatable reads, and phantom reads are possible." |
-| READ COMMITTED | "Dirty reads aren't possible; non-repeatable reads and phantom reads are possible." (**기본값**) |
-| REPEATABLE READ | "Dirty reads and non-repeatable reads aren't possible, phantom reads are possible." |
-| SNAPSHOT | "Dirty reads, non-repeatable reads, and phantom reads aren't possible." |
-| SERIALIZABLE | 위와 같으나 "currently doesn't ensure equivalence of concurrent and serializable execution of transactions that perform write operations." |
+| 격리 수준 | H2 공식 문서의 서술 | 번역 |
+|---|---|---|
+| READ UNCOMMITTED | "Dirty reads, non-repeatable reads, and phantom reads are possible." | 더티 리드, 반복 불가능한 읽기, 팬텀 리드가 모두 일어날 수 있다. |
+| READ COMMITTED | "Dirty reads aren't possible; non-repeatable reads and phantom reads are possible." (**기본값**) | 더티 리드는 불가능하지만, 반복 불가능한 읽기와 팬텀 리드는 일어날 수 있다. |
+| REPEATABLE READ | "Dirty reads and non-repeatable reads aren't possible, phantom reads are possible." | 더티 리드와 반복 불가능한 읽기는 불가능하고, 팬텀 리드는 일어날 수 있다. |
+| SNAPSHOT | "Dirty reads, non-repeatable reads, and phantom reads aren't possible." | 더티 리드, 반복 불가능한 읽기, 팬텀 리드가 모두 불가능하다. |
+| SERIALIZABLE | 위와 같으나 "currently doesn't ensure equivalence of concurrent and serializable execution of transactions that perform write operations." | 위와 같으나, 쓰기 작업을 수행하는 트랜잭션들에 대해서는 동시 실행과 직렬 실행이 동등함을 현재로서는 보장하지 않는다. |
+
+**풀이** — 위에서 아래로 갈수록 막히는 이상 현상이 하나씩 늘어난다.
+표에서 정말 눈여겨볼 곳은 마지막 줄이다 — SERIALIZABLE 은 이름과 달리
+"직렬 실행과 같은 결과"를 H2 스스로 보장하지 않는다고 적어 두었다.
 
 > H2 는 표준 4단계 외에 **SNAPSHOT** 이라는 수준을 따로 갖고 있다.
 > 그리고 SERIALIZABLE 이 완전하지 않다는 점을 스스로 밝히고 있다.
@@ -673,6 +811,12 @@ IDENTITY 는 **DB 가 채번한 PK 를 알아야 영속성 컨텍스트에 등�
 > "If no transaction is running, the listener is not invoked at all,
 > since we cannot honor the required semantics."
 > — Spring Framework Reference
+
+**번역** — "실행 중인 트랜잭션이 없으면 리스너는 아예 호출되지 않는다.
+요구되는 의미론(커밋 직후 실행 등)을 지킬 수 없기 때문이다."
+
+**풀이** — "AFTER_COMMIT 에 실행하라"고 했는데 커밋할 트랜잭션이 없으면 지킬 방법이 없으므로,
+Spring 은 어중간하게 실행하는 대신 **그냥 건너뛴다**. 실패가 아니라 무시라서 흔적이 남지 않는다.
 
 실무에서 **"왜 리스너가 안 타지?"의 1순위 원인**이다. 예외도 경고도 없다.
 발행하는 메서드에 `@Transactional` 이 빠져 있는지부터 확인해야 한다.
